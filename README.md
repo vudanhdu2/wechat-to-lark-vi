@@ -1,25 +1,30 @@
-# wechat-to-lark
+# wechat-to-lark (v2)
 
-A Claude Code skill that automates translating WeChat articles (mp.weixin.qq.com) to Vietnamese and publishing them as beautifully formatted Lark documents — complete with images, callouts, and QA verification.
+A Claude Code skill that automates translating WeChat articles (mp.weixin.qq.com) to Vietnamese and publishing them as Lark documents — complete with images, embedded videos, callouts, and QA verification.
 
 ## What it does
 
-Given a WeChat article URL, this skill runs a 5-phase pipeline:
+Given a WeChat article URL, the pipeline runs:
 
 ```
-Phase 1: EXTRACT  → Open URL via CDP browser, scroll, extract text + images
-Phase 2: MAP      → Build image-context map (which image goes where)
-Phase 3: TRANSLATE → Translate Chinese → natural Vietnamese
-Phase 4: CREATE   → Create Lark doc with images via lark-cli
-Phase 5: QA       → Cross-check translation vs original
+Phase 1:  EXTRACT  → text + images + videos (via CDP browser + regex)
+Phase 2:  MAP      → image-context map + video-context map
+Phase 3:  TRANSLATE → Chinese → natural Vietnamese
+Phase 4:  CREATE   → Lark doc text-only (v2 API, markdown)
+Phase 4a: IMAGES   → fetch block IDs, insert via XML <img> block_insert_after
+Phase 4b: VIDEOS   → download .mp4 files, insert via +media-insert preview player
+Phase 5:  QA       → cross-check counts, positions, missing content
 ```
 
 ## Key technical solutions
 
-- **WeChat image extraction**: Uses regex on `innerHTML` instead of DOM selectors (WeChat's nested sections make `querySelectorAll("img")` return 0 results)
-- **Image position mapping**: `[[IMG_N]]` markers bridge extraction → translation → document creation
-- **Shell safety**: All CDP eval calls use heredoc (`--data-binary @- << 'EVALEOF'`) to avoid regex escape issues
-- **Chunked creation**: Long articles are split at heading boundaries for reliable Lark doc creation
+- **WeChat image extraction**: Regex on `innerHTML` (DOM selectors return 0 results due to WeChat's nested sections)
+- **WeChat video extraction**: Regex for `data-mpvid` + `<video src="...mpvideo.qpic.cn...">` patterns
+- **Image position mapping**: `[[IMG_N]]` markers bridge extraction → translation → block-level insertion
+- **Two-pass insertion (CRITICAL)**: `<image>` markdown is silently stripped by lark-cli v2 API. Images must be inserted in a second pass via XML `<img>` + `block_insert_after` against fetched block IDs
+- **Video embedding**: Download videos locally, then upload via `+media-insert --file-view preview` for inline player. Files >20MB auto-use multipart upload
+- **Shell safety**: All CDP eval calls use heredoc (`--data-binary @- << 'EVALEOF'`)
+- **lark-cli v2 API**: All `docs` commands use `--api-version v2` with `--content "@file"` and `--doc-format markdown|xml`
 
 ## Prerequisites
 
@@ -64,14 +69,29 @@ Claude will automatically:
 
 ```
 wechat-to-lark/
-├── SKILL.md                              # Main pipeline definition
+├── SKILL.md                              # Main pipeline definition (v2.0.0)
 ├── README.md                             # This file
 └── references/
-    ├── wechat-extraction.md              # WeChat DOM extraction scripts
+    ├── wechat-extraction.md              # WeChat DOM extraction (text/images/videos)
     ├── translation-guidelines.md         # Vietnamese translation style guide
-    ├── lark-formatting.md                # Lark document formatting templates
-    └── qa-checklist.md                   # QA verification process
+    ├── lark-formatting.md                # Lark doc formatting + XML image insertion (v2 API)
+    ├── video-handling.md                 # Video download + +media-insert workflow
+    └── qa-checklist.md                   # QA verification (images + videos + headings)
 ```
+
+## Changelog
+
+### v2.0.0 (2026-05-21)
+
+- **NEW**: Full video support — extract, download, embed as inline player
+- **BREAKING**: Migrated to lark-cli v2 API (`--api-version v2`, `--content "@file"`, `--doc-format markdown`)
+- **FIX**: Images now inserted in 2-pass (Phase 4 text-only, then Phase 4a XML `<img>` via `block_insert_after`) — the markdown `<image>` extension is silently stripped in v2
+- **FIX**: `/new` CDP endpoint changed to POST (v2.5.3+)
+- **FIX**: lark-cli `--file` requires relative paths inside current directory
+
+### v1.0.0
+
+- Initial release: text + image extraction, translation, Lark doc creation
 
 ## License
 

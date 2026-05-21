@@ -115,6 +115,72 @@ sleep 2
 
 ---
 
+## Script 4: Trích xuất video
+
+WeChat embed video qua `<video src="https://mpvideo.qpic.cn/..." data-mpvid="wxv_...">`. Mỗi video có:
+- **`data-mpvid`**: ID nội bộ WeChat (`wxv_...`) — dùng để dedup
+- **`src`** trong `<video>`: URL `.mp4` thực, có chứa token auth (`auth_key`, `auth_info`) hết hạn theo thời gian
+- **`poster`**: ảnh thumbnail cho video
+
+**Bắt buộc scroll bottom trước** — video player được render lazy.
+
+```javascript
+(function() {
+  var html = document.body.innerHTML;
+  var result = {};
+
+  // mpvideo IDs (data-mpvid) — dùng để dedup và đếm video
+  var ids = [];
+  var seenIds = {};
+  var re1 = /data-mpvid="([^"]+)"/g;
+  var m;
+  while ((m = re1.exec(html)) !== null) {
+    if (!seenIds[m[1]]) { seenIds[m[1]] = 1; ids.push(m[1]); }
+  }
+  result.mpvideo_ids = ids;
+
+  // Direct video src URLs (.mp4)
+  var srcs = [];
+  var re2 = /<video[^>]*src="([^"]+\.mp4[^"]*)"/g;
+  while ((m = re2.exec(html)) !== null) {
+    srcs.push(m[1].replace(/&amp;/g, "&"));
+  }
+  result.urls = srcs;
+
+  // Poster thumbnails (theo thứ tự video)
+  var posters = [];
+  var re3 = /poster="([^"]+)"/g;
+  while ((m = re3.exec(html)) !== null) {
+    posters.push(m[1].replace(/&amp;/g, "&"));
+  }
+  result.posters = posters;
+
+  result.total = srcs.length;
+  return JSON.stringify(result);
+})()
+```
+
+**Kết quả mẫu:**
+```json
+{
+  "total": 8,
+  "mpvideo_ids": ["wxv_4523809439451381761", "wxv_4523794643523895298", ...],
+  "urls": ["https://mpvideo.qpic.cn/0bc3bq.../...mp4?...auth_key=...&vid=wxv_...", ...],
+  "posters": ["http://mmbiz.qpic.cn/.../0?wx_fmt=jpeg", ...]
+}
+```
+
+**Lưu ý:**
+- URL video có `auth_key`/`auth_info` — chỉ hợp lệ vài giờ. Tải về càng sớm càng tốt.
+- `&amp;` trong URL phải decode → `&` trước khi `curl`.
+- Số `urls` có thể nhỏ hơn `mpvideo_ids` nếu vài video không có direct src (chỉ embed iframe).
+- Một số video rất dài (full keynote >1h) có thể >500MB — luôn HEAD check trước:
+  ```bash
+  curl -sI -L "$URL" --max-time 30 | grep -i content-length
+  ```
+
+---
+
 ## Script 3: Image-Context Mapping (bản đồ vị trí ảnh)
 
 ```javascript

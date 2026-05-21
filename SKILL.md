@@ -1,13 +1,13 @@
 ---
 name: wechat-to-lark
-version: 1.0.0
+version: 2.0.0
 description: |
   Pipeline dịch bài viết WeChat sang tiếng Việt và đăng lên LarkSuite.
   Kích hoạt khi user cung cấp link mp.weixin.qq.com và yêu cầu dịch/clone bài viết.
-  Bao gồm: trích xuất nội dung + ảnh, dịch thuần Việt, tạo Lark doc có ảnh, QA đối chiếu.
+  Bao gồm: trích xuất nội dung + ảnh + video, dịch thuần Việt, tạo Lark doc có ảnh & video embed, QA đối chiếu.
 metadata:
   author: vudan
-  updated: 2026-04-08
+  updated: 2026-05-21
   requires:
     skills: ["web-access", "lark-doc"]
     bins: ["lark-cli"]
@@ -25,6 +25,14 @@ EVALEOF
 ```
 **KHÔNG BAO GIỜ** dùng `-d '...'` với inline JavaScript — regex và ký tự đặc biệt sẽ bị shell bash interpret sai, gây lỗi `{"error":"Uncaught"}`.
 
+## ⚠️ Quy tắc lark-cli v2 quan trọng
+
+1. **Luôn dùng `--api-version v2`** — v1 đã deprecated.
+2. **Cú pháp v2:** `--content --doc-format markdown|xml` (KHÔNG dùng `--markdown` của v1).
+3. **`<image url="..."/>` trong markdown content KHÔNG hoạt động ở v2** — image tags sẽ bị strip silently khi tạo doc. Bắt buộc chèn ảnh ở **Phase 4a** bằng XML `<img>` qua `block_insert_after`.
+4. **`--file` yêu cầu relative path** trong thư mục hiện tại — `cd` vào thư mục chứa file trước khi chạy `+media-insert`. Path tuyệt đối kiểu Windows (`C:/...`) sẽ bị reject.
+5. **`/new` API từ v2.5.3:** dùng `curl -X POST --data-raw "URL" "http://localhost:3456/new"`, không phải query string.
+
 ## Khi nào kích hoạt
 
 - User cung cấp URL dạng `mp.weixin.qq.com/s/...` và yêu cầu dịch, clone, hoặc đăng lên Lark
@@ -38,59 +46,42 @@ EVALEOF
    ```
    Nếu chưa chạy, hướng dẫn user bật Chrome remote debugging.
 
-2. **Load lark-doc skill** (và lark-shared) để sử dụng `lark-cli docs +create/+update`.
+2. **Load lark-doc skill** (và lark-shared) để sử dụng `lark-cli docs +create/+update/+media-insert`.
 
 3. **Đọc site pattern WeChat** nếu có: `web-access/references/site-patterns/mp.weixin.qq.com.md`
 
 ## Pipeline tổng quan
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    WeChat URL (mp.weixin.qq.com)                │
-└──────────────────────────┬──────────────────────────────────────┘
-                           ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  Phase 1: EXTRACT                                                │
-│  CDP proxy → scroll bottom → regex innerHTML                     │
-│  Output: ① text với [[IMG_N]] markers  ② mảng URL ảnh           │
-└──────────────────────────┬───────────────────────────────────────┘
-                           ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  Phase 2: MAP                                                    │
-│  Xác định context text xung quanh mỗi [[IMG_N]]                 │
-│  Output: ③ image-context map (JSON) ← LƯU LẠI CHO PHASE 5      │
-└──────────────────────────┬───────────────────────────────────────┘
-                           ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  Phase 3: TRANSLATE                                              │
-│  Dịch thuần Việt, giữ nguyên [[IMG_N]] markers                  │
-│  Input: ① text gốc    Output: ④ text tiếng Việt với markers     │
-└──────────────────────────┬───────────────────────────────────────┘
-                           ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  Phase 4: CREATE                                                 │
-│  Thay [[IMG_N]] → <image url="②[N]"/>  +  Lark formatting       │
-│  Input: ②④    Output: ⑤ Lark doc URL + doc_id                   │
-│  Công cụ: lark-cli docs +create / +update --mode append          │
-└──────────────────────────┬───────────────────────────────────────┘
-                           ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  Phase 5: QA                                                     │
-│  Fetch ⑤ → đối chiếu với ①②③                                    │
-│  Kiểm tra: heading count, image count, vị trí ảnh, đoạn thiếu   │
-│  Nếu lỗi → docs +update --mode insert_before/after để sửa       │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────── WeChat URL ───────────────────────┐
+                              ▼
+  Phase 1: EXTRACT   text + [[IMG_N]] markers + ảnh URLs + video URLs
+                              ▼
+  Phase 2: MAP       image-context map + video-context map
+                              ▼
+  Phase 3: TRANSLATE bản tiếng Việt (giữ [[IMG_N]], đánh dấu video positions)
+                              ▼
+  Phase 4: CREATE    Lark doc text-only (v2 API, markdown) — KHÔNG ảnh/video
+                              ▼
+  Phase 4a: IMAGES   fetch block IDs → block_insert_after <img> (XML)
+                              ▼
+  Phase 4b: VIDEOS   download mp4 → +media-insert --file-view preview
+                              ▼
+  Phase 5: QA        đối chiếu: <img>, <figure view-type="Preview">, headings
 ```
 
-**Tóm tắt data flow:**
+**Data flow:**
 
 | Output | Sinh ra ở | Dùng lại ở |
 |--------|----------|------------|
-| ① Text + markers | Phase 1.4 | Phase 3, Phase 5 |
-| ② Mảng URL ảnh | Phase 1.3 | Phase 4 |
-| ③ Image-context map | Phase 2 | Phase 4, Phase 5 |
-| ④ Text Việt + markers | Phase 3 | Phase 4 |
-| ⑤ Lark doc_id + URL | Phase 4 | Phase 5 |
+| ① Text + `[[IMG_N]]` markers | Phase 1.5 | Phase 3, Phase 5 |
+| ② Mảng URL ảnh | Phase 1.3 | Phase 4a |
+| ③ Mảng URL video | Phase 1.4 | Phase 4b |
+| ④ Image-context map | Phase 2 | Phase 4a, Phase 5 |
+| ⑤ Video-context map | Phase 2 | Phase 4b |
+| ⑥ Text Việt | Phase 3 | Phase 4 |
+| ⑦ Lark doc_id + URL | Phase 4 | Phase 4a, 4b, 5 |
+| ⑧ Block ID mapping | Phase 4a | Phase 4a |
 
 ---
 
@@ -101,11 +92,12 @@ EVALEOF
 ### 1.1 Mở bài viết
 
 ```bash
-# Mở URL qua CDP proxy
-curl -s "http://localhost:3456/new?url=WECHAT_URL"
+# v2.5.3+: POST với URL trong body
+curl -s -X POST --data-raw "WECHAT_URL" "http://localhost:3456/new"
 # → Lưu targetId trả về
 
-# Kiểm tra trang đã load
+# Kiểm tra trang đã load (đợi 2-3s cho WeChat verify nếu cần)
+sleep 3
 curl -s "http://localhost:3456/info?target=TARGET_ID"
 # → Lấy title từ trường "title"
 ```
@@ -114,78 +106,26 @@ curl -s "http://localhost:3456/info?target=TARGET_ID"
 
 ```bash
 curl -s "http://localhost:3456/scroll?target=TARGET_ID&direction=bottom"
-# Đợi 2 giây cho ảnh load
-sleep 2
+sleep 3  # đợi ảnh + video metadata load
 ```
 
-### 1.3 Trích xuất ảnh (QUAN TRỌNG)
+### 1.3 Trích xuất ảnh (Script 1)
 
-**KHÔNG DÙNG `querySelectorAll("img")`** — WeChat trả về 0 kết quả.
+**KHÔNG DÙNG `querySelectorAll("img")`** — WeChat trả về 0 kết quả. Dùng regex trên innerHTML.
 
-Dùng **regex trên innerHTML**:
+Xem [references/wechat-extraction.md → Script 1](references/wechat-extraction.md#script-1-trích-xuất-ảnh).
 
-**QUAN TRỌNG:** Luôn dùng `--data-binary @-` với heredoc thay vì `-d '...'` để tránh lỗi shell escape.
+### 1.4 Trích xuất video (Script 4 — MỚI)
 
-```bash
-curl -s -X POST "http://localhost:3456/eval?target=TARGET_ID" --data-binary @- << 'EVALEOF'
-(function() {
-  var html = document.getElementById("js_content").innerHTML;
-  var seen = {};
-  var images = [];
+WeChat embed video qua `<video src="...mpvideo.qpic.cn..." data-mpvid="wxv_...">`. Bắt buộc scroll bottom trước.
 
-  // Pattern 1 (chính): data-src — ảnh lazy-loaded
-  var re1 = /data-src="(https?:\/\/mmbiz\.qpic\.cn[^"]+)"/g;
-  var m;
-  while ((m = re1.exec(html)) !== null) {
-    var url = m[1].replace(/&amp;/g, "&");
-    if (!seen[url]) { seen[url] = 1; images.push(url.split("#")[0]); }
-  }
+Xem [references/wechat-extraction.md → Script 4](references/wechat-extraction.md#script-4-trích-xuất-video).
 
-  // Pattern 2 (phụ): src — ảnh đã load xong, dedup với pattern 1
-  var re2 = /\ssrc="(https?:\/\/mmbiz\.qpic\.cn[^"]+)"/g;
-  while ((m = re2.exec(html)) !== null) {
-    var url = m[1].replace(/&amp;/g, "&");
-    var base = url.split("#")[0].split("&tp=")[0];
-    if (!seen[base] && !seen[url]) { seen[url] = 1; images.push(url.split("#")[0]); }
-  }
+### 1.5 Trích xuất text với image markers (Script 2)
 
-  return JSON.stringify({total: images.length, urls: images});
-})()
-EVALEOF
-```
+Xem [references/wechat-extraction.md → Script 2](references/wechat-extraction.md#script-2-trích-xuất-text).
 
-### 1.4 Trích xuất text với image markers
-
-**QUAN TRỌNG:** Dùng `--data-binary @-` với heredoc, KHÔNG dùng `-d '...'` (gây lỗi shell escape với regex).
-
-```bash
-curl -s -X POST "http://localhost:3456/eval?target=TARGET_ID" --data-binary @- << 'EVALEOF'
-(function() {
-  var article = document.getElementById("js_content");
-  if (!article) return "NO_CONTENT";
-  var html = article.innerHTML;
-  var idx = 0;
-  var marked = html.replace(/<img[^>]*data-src="(https?:\/\/mmbiz[^"]+)"[^>]*>/g, function() {
-    return "[[IMG_" + (idx++) + "]]";
-  });
-  var text = marked.replace(/<[^>]+>/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  var lines = text.split("\n").filter(function(l) {
-    var t = l.trim();
-    if (!t) return false;
-    if (/^(重播|分享|赞|关闭|观看更多|更多|退出全屏|继续观看|继续播放|播放|倍速|全屏)/.test(t)) return false;
-    if (/^(已关注|关注|转载|写下你的评论|视频详情|点赞|在看|已同步到看一看)/.test(t)) return false;
-    if (/^(切换到|进度条|倍速播放中|您的浏览器不支持|0\/0|分享视频)/.test(t)) return false;
-    if (/^(0\.5倍|0\.75倍|1\.0倍|1\.5倍|2\.0倍|超清|流畅)$/.test(t)) return false;
-    if (/^，时长$/.test(t)) return false;
-    if (/^\d{2}:\d{2}$/.test(t)) return false;
-    return true;
-  });
-  return lines.join("\n");
-})()
-EVALEOF
-```
-
-### 1.5 Đóng tab
+### 1.6 Đóng tab
 
 ```bash
 curl -s "http://localhost:3456/close?target=TARGET_ID"
@@ -193,19 +133,22 @@ curl -s "http://localhost:3456/close?target=TARGET_ID"
 
 ---
 
-## Phase 2: MAP — Bản đồ vị trí ảnh
+## Phase 2: MAP — Bản đồ vị trí ảnh & video
 
 > Đọc chi tiết tại [references/wechat-extraction.md](references/wechat-extraction.md)
 
-Với mỗi `[[IMG_N]]` trong text đã trích xuất:
-- Lấy 60-100 ký tự trước và sau marker
-- Kết quả: `{ img: N, textBefore: "...", textAfter: "..." }`
+**Image-context map** — với mỗi `[[IMG_N]]`:
+- Lấy 60-100 ký tự trước & sau marker
+- Dùng để chèn ảnh đúng vị trí ở Phase 4a
 
-Dùng **Script 3** trong [references/wechat-extraction.md](references/wechat-extraction.md#script-3-image-context-mapping-bản-đồ-vị-trí-ảnh) — KHÔNG duplicate script ở đây.
+**Video-context map** — với mỗi video URL:
+- Trong text gốc, tìm cụm 视频 / 看视频 / "完整中英文双语视频" hoặc placeholder text gần đoạn video
+- Ghi nhận unique snippet (50-80 ký tự) làm anchor cho `--selection-with-ellipsis` ở Phase 4b
+- Nếu video không có anchor text rõ ràng → chuẩn bị caption riêng (vd: "📺 Demo: [mô tả ngắn]:")
 
-**⚠️ Lưu output JSON** từ Phase 2 — sẽ cần lại ở Phase 5 (QA) để kiểm tra vị trí ảnh.
+Dùng Script 3 trong [references/wechat-extraction.md](references/wechat-extraction.md#script-3-image-context-mapping).
 
-Bản đồ này dùng ở Phase 4 để chèn `<image>` đúng vị trí, và Phase 5 để QA.
+**⚠️ Lưu JSON Phase 2** — cần ở Phase 4a, 4b và Phase 5.
 
 ---
 
@@ -220,48 +163,169 @@ Bản đồ này dùng ở Phase 4 để chèn `<image>` đúng vị trí, và P
 - **Adapt**: Ẩn dụ, idiom Trung Quốc → giải thích tự nhiên cho người Việt
 - **Format**: Nhận diện nội dung phù hợp cho callout, grid, table của Lark
 
-### Quy trình
+### Xử lý vị trí video
 
-1. Dịch theo từng section (heading), giữ nguyên cấu trúc heading
-2. Giữ nguyên tất cả `[[IMG_N]]` markers — chúng sẽ được thay thế ở Phase 4
-3. Đánh dấu nội dung phù hợp cho callout (insight quan trọng, cảnh báo, trích dẫn)
+- Nếu đoạn gốc có text giới thiệu video → dịch text đó, dùng làm anchor cho video sau này
+- Nếu không có anchor rõ → trong bản dịch, chèn dòng caption `**📺 [Mô tả ngắn về video]:**` ở vị trí phù hợp; caption này sẽ là anchor cho `--selection-with-ellipsis`
 
 ---
 
-## Phase 4: CREATE — Tạo Lark document
+## Phase 4: CREATE — Tạo Lark document text-only
 
 > Đọc chi tiết tại [references/lark-formatting.md](references/lark-formatting.md)
 
+⚠️ **Phase này CHỈ tạo text + headings + lists + callouts.** Ảnh và video sẽ được chèn ở Phase 4a/4b. KHÔNG nhúng `<image>` hay `<img>` trong markdown content — sẽ bị strip silently.
+
 ### 4.1 Chuẩn bị Markdown
 
-1. Thêm metadata header (callout với nguồn, tác giả, link gốc)
-2. Thay mỗi `[[IMG_N]]` bằng `<image url="IMAGES[N]" align="center"/>`
-   - `IMAGES[N]` = URL ảnh thứ N từ Phase 1.3
-3. Thêm callout, grid, table theo đánh dấu ở Phase 3
-4. Thêm `---` giữa các section lớn
+1. Thêm metadata header (blockquote hoặc callout với nguồn, tác giả, link gốc)
+2. **Xoá các `[[IMG_N]]` markers** trong text dịch — sẽ chèn lại ở Phase 4a
+3. **Giữ lại các caption video** (vd: `**📺 Demo: ...:**`) làm anchor cho Phase 4b
+4. Thêm callout, grid, table theo Phase 3
+5. Thêm `---` giữa các section lớn
 
-### 4.2 Tạo document
+### 4.2 Ghi file markdown (relative path bắt buộc)
 
-**Bài ngắn** (< 5000 ký tự markdown):
 ```bash
-lark-cli docs +create --title "TITLE" --markdown "FULL_CONTENT"
+cat > ./article_vi.md << 'MDEOF'
+[FULL MARKDOWN CONTENT]
+MDEOF
 ```
 
-**Bài dài** (chia chunk tại heading boundaries):
-```bash
-# Chunk 1
-lark-cli docs +create --title "TITLE" --markdown "CHUNK_1"
-# → Lưu doc_id
+### 4.3 Tạo document (v2 API)
 
-# Chunk 2+
-lark-cli docs +update --doc DOC_ID --mode append --markdown "CHUNK_2"
+```bash
+lark-cli docs +create \
+  --api-version v2 \
+  --title "TITLE" \
+  --doc-format markdown \
+  --content "@./article_vi.md"
+# → Lưu document_id từ data.document.document_id
 ```
 
-### 4.3 Lưu ý quan trọng
+**Tuỳ chọn:** `--parent-token TOKEN` để đặt vào folder/wiki cụ thể.
 
-- URL ảnh WeChat (`mmbiz.qpic.cn`) công khai, dùng trực tiếp trong `<image url="..."/>`
-- Không bẻ chunk giữa câu hoặc giữa callout/grid đang mở
-- Nếu user chỉ định `--folder-token` hoặc `--wiki-node`, truyền qua cho `docs +create`
+---
+
+## Phase 4a: INSERT IMAGES — Chèn ảnh qua block_insert_after
+
+> Đọc chi tiết tại [references/lark-formatting.md → Image insertion](references/lark-formatting.md#chèn-ảnh-qua-block_insert_after-v2)
+
+### 4a.1 Fetch block IDs
+
+```bash
+lark-cli docs +fetch \
+  --api-version v2 \
+  --doc DOC_ID \
+  --detail with-ids
+# → XML có id="..." trên mỗi block <p>, <h2>, <ul>, etc.
+```
+
+### 4a.2 Xác định anchor block cho mỗi ảnh
+
+Với mỗi item trong image-context map (Phase 2):
+- Tìm trong XML đã fetch một block có text khớp với `textBefore` (sau khi dịch)
+- Lưu `id="..."` của block đó làm anchor
+
+### 4a.3 Insert mỗi ảnh
+
+```bash
+echo '<img src="IMAGE_URL" align="center"/>' | \
+lark-cli docs +update \
+  --api-version v2 \
+  --doc DOC_ID \
+  --command block_insert_after \
+  --block-id ANCHOR_BLOCK_ID \
+  --doc-format xml \
+  --content -
+```
+
+**Cẩn thận thứ tự khi nhiều ảnh dùng cùng anchor:** mỗi insert sau cùng một block_id sẽ đẩy block cũ xuống — thứ tự kết quả bị **đảo ngược**. Hoặc:
+- Dùng anchor khác nhau cho mỗi ảnh, HOẶC
+- Insert ảnh theo thứ tự ngược trong document, HOẶC
+- Sau khi insert ảnh đầu, dùng ảnh đầu (vừa nhận block_id mới) làm anchor cho ảnh kế tiếp
+
+---
+
+## Phase 4b: INSERT VIDEOS — Tải + chèn video
+
+> Đọc chi tiết tại [references/video-handling.md](references/video-handling.md)
+
+### 4b.1 Kiểm tra kích thước trước
+
+```bash
+for url in "${VIDEO_URLS[@]}"; do
+  curl -sI -L "$url" --max-time 30 | grep -i "content-length"
+done
+```
+
+**Nếu có video > 500MB** (vd: bản keynote dài >1h): hỏi user qua AskUserQuestion trước khi tải:
+- Tải toàn bộ (sẽ mất nhiều thời gian, dùng multipart upload tự động cho Lark)
+- Bỏ qua video lớn, chỉ chèn link
+- Chỉ chèn link cho video lớn, tải bình thường các video nhỏ
+
+### 4b.2 Download videos (song song)
+
+```bash
+mkdir -p /tmp/wechat_videos && cd /tmp/wechat_videos
+i=1
+for url in "${VIDEO_URLS[@]}"; do
+  curl -s -L "$url" -o "video_${i}.mp4" --max-time 600 &
+  i=$((i+1))
+done
+wait
+ls -la *.mp4
+```
+
+### 4b.3 Insert vào Lark (relative path bắt buộc)
+
+⚠️ **Phải `cd` vào thư mục chứa file** vì lark-cli không nhận absolute path Windows.
+
+**Case A — Video có anchor text trong bản dịch:**
+
+```bash
+cd /tmp/wechat_videos
+lark-cli docs +media-insert \
+  --doc DOC_ID \
+  --type file \
+  --file ./video_3.mp4 \
+  --file-view preview \
+  --selection-with-ellipsis "unique substring từ paragraph anchor"
+```
+
+**Case B — Video không có anchor text → tự thêm caption trước:**
+
+```bash
+# Bước 1: Thêm caption paragraph (block_insert_after sau text block trước đó)
+echo '<p><b>📺 [Mô tả video]:</b></p>' | \
+  lark-cli docs +update --api-version v2 --doc DOC_ID \
+    --command block_insert_after \
+    --block-id PREVIOUS_TEXT_BLOCK_ID \
+    --doc-format xml --content -
+
+# Bước 2: Insert video, dùng chính caption làm anchor
+lark-cli docs +media-insert \
+  --doc DOC_ID --type file --file ./video_X.mp4 \
+  --file-view preview \
+  --selection-with-ellipsis "📺 [Mô tả video]"
+```
+
+**Case C — Cần chèn video TRƯỚC một paragraph:**
+
+```bash
+lark-cli docs +media-insert \
+  --doc DOC_ID --type file --file ./video_4.mp4 \
+  --file-view preview \
+  --before \
+  --selection-with-ellipsis "paragraph text ngay sau vị trí video"
+```
+
+### 4b.4 Lưu ý quan trọng
+
+- `--file-view preview` → inline player (CẦN cho video); `card` (default) → chỉ thumbnail
+- **Sau khi insert file/video block, KHÔNG thể `block_insert_after` file block đó** — schema validation fail (`degrade_code=4000020`). Thêm captions TRƯỚC khi insert video.
+- File >20MB tự động dùng multipart upload (4MB/chunk) — kiên nhẫn chờ; file 800MB ~ vài phút.
+- Sau insert xong, **dọn file**: `rm -rf /tmp/wechat_videos`
 
 ---
 
@@ -272,24 +336,40 @@ lark-cli docs +update --doc DOC_ID --mode append --markdown "CHUNK_2"
 ### 5.1 Fetch bản dịch
 
 ```bash
-lark-cli docs +fetch --doc DOC_ID
+lark-cli docs +fetch --api-version v2 --doc DOC_ID --doc-format xml
 ```
 
-### 5.2 Đối chiếu
+### 5.2 Đếm và đối chiếu (script Python)
 
-**Cần:** Output JSON từ Phase 2 (image-context map) + text gốc từ Phase 1.4
+```python
+import re, json, sys
+data = json.load(sys.stdin)
+content = data['data']['document']['content']
 
-| Hạng mục | Cách kiểm tra |
-|----------|--------------|
-| Đủ section | Đếm heading ## / ### gốc vs dịch |
-| Đủ ảnh | Đếm `[[IMG_N]]` gốc vs `<image>` trong Lark doc |
-| Ảnh đúng vị trí | So sánh context xung quanh ảnh với image-context map (Phase 2) |
-| Không thiếu đoạn | So sánh số đoạn văn gốc vs dịch |
-| Không còn marker | Kiểm tra không còn `[[IMG_N]]` trong Lark doc |
+imgs    = re.findall(r'<img[^>]+>', content)
+videos  = re.findall(r'<figure[^>]*view-type="Preview"', content)
+h2s     = re.findall(r'<h2[^>]*>([^<]+)</h2>', content)
+markers = re.findall(r'\[\[IMG_\d+\]\]', content)
 
-### 5.3 Báo cáo
+print(f'Images: {len(imgs)}   Videos: {len(videos)}')
+print(f'H2 sections: {len(h2s)}')
+print(f'Markers leftover: {len(markers)} (phải = 0)')
+```
 
-Xuất bảng QA cho user. Nếu có vấn đề, dùng `docs +update` để sửa.
+### 5.3 Bảng kiểm
+
+| Hạng mục | Cách kiểm | Ngưỡng |
+|----------|----------|--------|
+| Số ảnh | `<img>` count | = Phase 1.3 total |
+| Số video | `<figure view-type="Preview">` count | = Phase 1.4 total |
+| Heading H2 | `<h2>` count | khớp gốc |
+| Heading H3 | `<h3>` count | khớp gốc (±2 do tổ chức lại) |
+| Marker còn sót | `[[IMG_` count | = 0 |
+| Vị trí ảnh | textBefore/After khớp Phase 2 | đúng ngữ cảnh |
+
+### 5.4 Báo cáo cho user
+
+Xuất bảng markdown + link tài liệu Lark. Nếu có vấn đề, dùng `docs +update --command block_insert_after/block_delete/str_replace` để sửa.
 
 ---
 
@@ -297,7 +377,8 @@ Xuất bảng QA cho user. Nếu có vấn đề, dùng `docs +update` để s�
 
 | File | Khi nào đọc |
 |------|------------|
-| [references/wechat-extraction.md](references/wechat-extraction.md) | Phase 1-2: trích xuất nội dung WeChat |
+| [references/wechat-extraction.md](references/wechat-extraction.md) | Phase 1-2: trích xuất nội dung WeChat (text/ảnh/video) |
 | [references/translation-guidelines.md](references/translation-guidelines.md) | Phase 3: dịch nội dung |
-| [references/lark-formatting.md](references/lark-formatting.md) | Phase 4: tạo Lark document |
+| [references/lark-formatting.md](references/lark-formatting.md) | Phase 4 + 4a: tạo Lark doc + chèn ảnh qua XML |
+| [references/video-handling.md](references/video-handling.md) | Phase 4b: download + insert video |
 | [references/qa-checklist.md](references/qa-checklist.md) | Phase 5: QA đối chiếu |
