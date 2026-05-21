@@ -1,10 +1,10 @@
 ---
 name: wechat-to-lark
-version: 2.0.0
+version: 2.1.0
 description: |
   Pipeline dịch bài viết WeChat sang tiếng Việt và đăng lên LarkSuite.
   Kích hoạt khi user cung cấp link mp.weixin.qq.com và yêu cầu dịch/clone bài viết.
-  Bao gồm: trích xuất nội dung + ảnh + video, dịch thuần Việt, tạo Lark doc có ảnh & video embed, QA đối chiếu.
+  Bao gồm: trích xuất nội dung + ảnh + video + format markers, dịch thuần Việt (bảo toàn bold/italic), tạo Lark doc có ảnh & video embed, QA đối chiếu.
 metadata:
   author: vudan
   updated: 2026-05-21
@@ -32,6 +32,16 @@ EVALEOF
 3. **`<image url="..."/>` trong markdown content KHÔNG hoạt động ở v2** — image tags sẽ bị strip silently khi tạo doc. Bắt buộc chèn ảnh ở **Phase 4a** bằng XML `<img>` qua `block_insert_after`.
 4. **`--file` yêu cầu relative path** trong thư mục hiện tại — `cd` vào thư mục chứa file trước khi chạy `+media-insert`. Path tuyệt đối kiểu Windows (`C:/...`) sẽ bị reject.
 5. **`/new` API từ v2.5.3:** dùng `curl -X POST --data-raw "URL" "http://localhost:3456/new"`, không phải query string.
+
+## 🔴 Hard constraint: Bảo toàn formatting
+
+Đây là RÀNG BUỘC CỨNG, không phải tuỳ chọn. Áp dụng cho mọi lần chạy skill trên mọi máy:
+
+1. **Phase 1.5 BẮT BUỘC dùng Script 2 mới (có format markers).** Script cũ chỉ strip HTML — KHÔNG được dùng. Xem `references/wechat-extraction.md → Script 2`.
+2. **Phase 3 BẮT BUỘC bảo toàn `**bold**` và `*italic*` markers** từ text đã extract. Số cụm bold trong bản dịch = số cụm bold trong bản gốc (sau extraction). Xem `references/translation-guidelines.md → MANDATORY: Bảo toàn formatting`.
+3. **Phase 5 BẮT BUỘC verify bold count** giữa text gốc và Lark doc. Nếu chênh lệch → fix ngay bằng `docs +update --command str_replace`. Xem `references/qa-checklist.md → Bold preservation check`.
+
+Lý do tồn tại ràng buộc này: WeChat dùng bold + highlight cam/đỏ cho key insight ở khắp bài. Nếu skill không bảo toàn, bản dịch trở nên phẳng lì, mất hoàn toàn nhấn mạnh của tác giả → chất lượng sụt giảm rõ rệt và không nhất quán giữa các lần chạy.
 
 ## Khi nào kích hoạt
 
@@ -156,10 +166,18 @@ Dùng Script 3 trong [references/wechat-extraction.md](references/wechat-extract
 
 > Đọc chi tiết tại [references/translation-guidelines.md](references/translation-guidelines.md)
 
+### Pre-flight: đếm format markers
+
+**TRƯỚC KHI dịch**, đếm trong text đã extract:
+- Số cụm `**...**` (bold) — gọi là `N_bold_src`
+- Số cụm `*...*` (italic) — gọi là `N_italic_src`
+
+Bản dịch hoàn chỉnh PHẢI có cùng số lượng. Đây là tiêu chí pass/fail cứng — không phải khuyến nghị.
+
 ### Nguyên tắc cốt lõi
 
 - **Thuần Việt**: Viết như tác giả Việt Nam, không phải dịch máy
-- **Giữ nguyên**: Tên sản phẩm, thuật ngữ kỹ thuật, tên Skill, `[[IMG_N]]` markers
+- **Giữ nguyên cả lượng và vị trí**: `**bold**` markers, `*italic*` markers, tên sản phẩm, thuật ngữ kỹ thuật, tên Skill, `[[IMG_N]]` markers
 - **Adapt**: Ẩn dụ, idiom Trung Quốc → giải thích tự nhiên cho người Việt
 - **Format**: Nhận diện nội dung phù hợp cho callout, grid, table của Lark
 
@@ -167,6 +185,18 @@ Dùng Script 3 trong [references/wechat-extraction.md](references/wechat-extract
 
 - Nếu đoạn gốc có text giới thiệu video → dịch text đó, dùng làm anchor cho video sau này
 - Nếu không có anchor rõ → trong bản dịch, chèn dòng caption `**📺 [Mô tả ngắn về video]:**` ở vị trí phù hợp; caption này sẽ là anchor cho `--selection-with-ellipsis`
+
+### Self-check sau khi dịch (BẮT BUỘC)
+
+```python
+# Đếm markers
+import re
+src_bold = len(re.findall(r'\*\*[^*]+\*\*', source_text))
+tgt_bold = len(re.findall(r'\*\*[^*]+\*\*', translated_text))
+assert src_bold == tgt_bold, f"Bold count mismatch: src={src_bold} tgt={tgt_bold}"
+```
+
+Nếu mismatch → quay lại bản dịch, thêm/bớt bold cho khớp. KHÔNG được skip bước này.
 
 ---
 

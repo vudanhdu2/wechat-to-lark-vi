@@ -75,43 +75,127 @@ sleep 2
 
 ---
 
-## Script 2: Trích xuất text với image markers
+## Script 2: Trích xuất text với image markers VÀ format markers
+
+> ⚠️ **BẮT BUỘC dùng phiên bản này** — phiên bản cũ (chỉ strip tags) làm mất hết bold/highlight của bản gốc, dẫn đến bản dịch phẳng lì không trung thành với formatting WeChat.
+
+WeChat thường nhấn mạnh key insight qua:
+- `<strong>` / `<b>` → in đậm
+- `<span style="font-weight: bold|600|700|...">` → in đậm
+- `<span style="color: rgb(...)">` (đặc biệt cam/đỏ) → highlight nhấn mạnh
+- `<em>` / `<i>` → nghiêng
+
+Script bên dưới convert tất cả những loại này thành markdown markers (`**bold**`, `*italic*`) **TRƯỚC** khi strip HTML, để Phase 3 (translate) có thể detect và bảo toàn.
 
 ```javascript
 (function() {
   var article = document.getElementById("js_content");
+  if (!article) return "NO_CONTENT";
   var html = article.innerHTML;
-  
-  // Thay mỗi <img> có data-src bằng [[IMG_N]]
+
+  // === STEP 1: Image markers ===
   var idx = 0;
-  var marked = html.replace(/<img[^>]*data-src="(https?:\/\/mmbiz[^"]+)"[^>]*>/g, function() {
+  html = html.replace(/<img[^>]*data-src="(https?:\/\/mmbiz[^"]+)"[^>]*>/g, function() {
     return "[[IMG_" + (idx++) + "]]";
   });
-  
-  // Strip HTML tags
-  var text = marked.replace(/<[^>]+>/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  
-  // Lọc noise từ video player WeChat
+
+  // === STEP 2: Convert format tags → markdown markers (TRƯỚC khi strip) ===
+  // Pass nhiều lần để xử lý nested tags
+
+  function applyFormat(h) {
+    var changed = true;
+    var iter = 0;
+    while (changed && iter < 10) {
+      changed = false;
+      iter++;
+
+      // Bold: <strong>, <b>
+      var h2 = h.replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1>/gi, function(_, tag, inner) {
+        var t = inner.trim();
+        return t ? " **" + t + "** " : "";
+      });
+      if (h2 !== h) { h = h2; changed = true; }
+
+      // Bold qua inline-style font-weight: bold | 600 | 700 | 800 | 900
+      var h3 = h.replace(/<span\b[^>]*style="[^"]*font-weight:\s*(?:bold|[6-9]00)[^"]*"[^>]*>([\s\S]*?)<\/span>/gi, function(_, inner) {
+        var t = inner.trim();
+        return t ? " **" + t + "** " : "";
+      });
+      if (h3 !== h) { h = h3; changed = true; }
+
+      // Highlight qua màu chữ KHÁC mặc định (đen/xám). WeChat dùng cam/đỏ cho emphasis.
+      // Loại trừ: black, #000, rgb(0,0,0), rgb gần 0, gray
+      var h4 = h.replace(/<span\b[^>]*style="[^"]*color:\s*([^;"]+)[^"]*"[^>]*>([\s\S]*?)<\/span>/gi, function(m, color, inner) {
+        var c = color.toLowerCase().replace(/\s+/g, "");
+        // Bỏ qua màu mặc định / xám đen
+        if (/^(black|#000(000)?|inherit|currentcolor)$/.test(c)) return m.replace(/<[^>]+>/g, "");
+        var rgbMatch = c.match(/rgb\((\d+),(\d+),(\d+)\)/);
+        if (rgbMatch) {
+          var r = +rgbMatch[1], g = +rgbMatch[2], b = +rgbMatch[3];
+          // Loại trừ đen + xám gần đen
+          if (r < 50 && g < 50 && b < 50) return m.replace(/<[^>]+>/g, "");
+        }
+        // Còn lại = highlight có chủ ý → mark as bold
+        var t = inner.trim();
+        return t ? " **" + t + "** " : "";
+      });
+      if (h4 !== h) { h = h4; changed = true; }
+
+      // Italic: <em>, <i>
+      var h5 = h.replace(/<(em|i)\b[^>]*>([\s\S]*?)<\/\1>/gi, function(_, tag, inner) {
+        var t = inner.trim();
+        return t ? " *" + t + "* " : "";
+      });
+      if (h5 !== h) { h = h5; changed = true; }
+    }
+    return h;
+  }
+
+  html = applyFormat(html);
+
+  // === STEP 3: Strip các tag còn lại, giữ markers ===
+  var text = html.replace(/<[^>]+>/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+
+  // === STEP 4: Clean up double-bold artifacts như "** **" hoặc "****" ===
+  text = text.replace(/\*\*\s*\*\*/g, "");          // empty bold
+  text = text.replace(/\*\*([^*]+)\*\*/g, function(_, inner) {
+    // Trim space ngay trong bold marker
+    return "**" + inner.trim() + "**";
+  });
+  text = text.replace(/ {2,}/g, " ");
+
+  // === STEP 5: Filter noise từ video player ===
   var lines = text.split("\n").filter(function(l) {
     var t = l.trim();
     if (!t) return false;
-    
-    // Video player noise patterns
     if (/^(重播|分享|赞|关闭|观看更多|更多|退出全屏|继续观看|继续播放|播放|倍速|全屏)/.test(t)) return false;
     if (/^(已关注|关注|转载|写下你的评论|视频详情|点赞|在看|已同步到看一看)/.test(t)) return false;
     if (/^(切换到|进度条|倍速播放中|您的浏览器不支持|0\/0|分享视频)/.test(t)) return false;
     if (/^(0\.5倍|0\.75倍|1\.0倍|1\.5倍|2\.0倍|超清|流畅)$/.test(t)) return false;
     if (/^，时长$/.test(t)) return false;
     if (/^\d{2}:\d{2}$/.test(t)) return false;
-    
     return true;
   });
-  
+
   return lines.join("\n");
 })()
 ```
 
-**Kết quả:** Text sạch với markers `[[IMG_0]]`, `[[IMG_1]]`, ... đánh dấu vị trí ảnh.
+**Kết quả mẫu:**
+
+```
+Hãy nói về Gemini 3.5 Flash trước.
+Nhiều người nghe thấy Flash sẽ nghĩ ngay đến "nhanh". Lần này đúng là vẫn nhanh, nhưng điều Google muốn nhấn mạnh đã đi xa hơn một bước:
+**Nó sẽ trở thành bộ não thực thi của Agent.**
+Để hiểu đúng tầm quan trọng...
+**Phiên bản flagship:** GPT-5...
+**Phiên bản nhẹ:** GPT-5 mini...
+**Lần này Google đã phá vỡ ranh giới đó.**
+Gemini 3.5 Flash (phiên bản nhẹ) mới ra, trên một số điểm chuẩn quan trọng đã **vượt mặt Gemini 3.1 Pro** (flagship thế hệ trước)...
+[[IMG_1]]
+```
+
+Phase 3 sẽ bảo toàn các `**...**` này trong bản dịch — xem `translation-guidelines.md → MANDATORY: format preservation`.
 
 ---
 

@@ -1,5 +1,59 @@
 # Hướng dẫn dịch thuần Việt
 
+## 🔴 MANDATORY: Bảo toàn formatting (bold/italic/highlight)
+
+**Đây là quy tắc CỨNG, không phải gợi ý.** Nếu không tuân thủ, bản dịch sẽ phẳng lì, mất hết nhấn mạnh của tác giả gốc và chất lượng giảm rõ rệt.
+
+### Quy tắc 1 — Mọi `**...**` trong text đã extract đều PHẢI giữ trong bản dịch
+
+Phase 1 (Script 2) đã convert tất cả `<strong>`, `<b>`, `<span style="font-weight:bold">`, và `<span style="color:cam/đỏ">` của WeChat sang markdown bold `**...**`. Trong Phase 3, bạn PHẢI:
+
+1. **Đếm số `**...**` markers** trong text gốc trước khi dịch
+2. **Đảm bảo bản dịch có CÙNG SỐ LƯỢNG `**...**`** ở các vị trí tương đương
+3. **KHÔNG bỏ markers** kể cả khi dịch rút gọn câu
+4. **KHÔNG thêm markers** ở chỗ gốc không có (giữ trung thành với ý đồ tác giả)
+
+### Quy tắc 2 — Áp dụng tương tự cho `*italic*`
+
+Markers `*xxx*` (italic) cũng phải giữ nguyên trong bản dịch.
+
+### Ví dụ ĐÚNG vs SAI
+
+```
+GỐC (sau extract):
+**Nó sẽ trở thành bộ não thực thi của Agent.**
+Để hiểu đúng tầm quan trọng của Flash lần này, cần nắm bối cảnh:
+**Phiên bản flagship:** GPT-5 của OpenAI, Claude Opus của Anthropic...
+
+✅ DỊCH ĐÚNG:
+**Nó sẽ trở thành bộ não thực thi của Agent.**
+Để hiểu đúng tầm quan trọng của Flash lần này, cần nắm bối cảnh:
+**Phiên bản flagship:** GPT-5 của OpenAI, Claude Opus của Anthropic...
+
+❌ DỊCH SAI (mất bold):
+Nó sẽ trở thành bộ não thực thi của Agent.
+Để hiểu đúng tầm quan trọng của Flash lần này, cần nắm bối cảnh:
+Phiên bản flagship: GPT-5 của OpenAI, Claude Opus của Anthropic...
+
+❌ DỊCH SAI (thêm bold không có trong gốc):
+**Nó sẽ trở thành bộ não thực thi của Agent.**
+Để hiểu đúng tầm quan trọng của **Flash lần này**, cần nắm bối cảnh:
+**Phiên bản flagship:** GPT-5 của OpenAI, **Claude Opus của Anthropic**...
+```
+
+### Quy tắc 3 — Vị trí bold trong câu
+
+Nếu chỉ một phần câu được bold (vd: `Gemini 3.5 Flash đã **vượt mặt Gemini 3.1 Pro** ở...`), giữ bold đúng cụm từ tương đương trong tiếng Việt. KHÔNG dịch xong rồi bôi đen cả câu hay quên bôi đen.
+
+### Self-check trước khi xuất bản dịch
+
+Trước khi đưa cho `lark-cli docs +create`, hãy chạy mental check:
+- [ ] Số `**` trong bản dịch = số `**` trong text gốc (chia 2 = số cụm bold)
+- [ ] Mỗi cụm bold tiếng Trung gốc → có cụm bold tương ứng tiếng Việt
+- [ ] Không có `**` lẻ (mở mà không đóng)
+
+---
+
 ## Nguyên tắc tổng quát
 
 Mục tiêu: **Người đọc Việt Nam cảm thấy bài viết được viết bởi một tác giả Việt**, không phải bản dịch từ tiếng Trung.

@@ -27,6 +27,8 @@ stats = {
   'videos':  len(re.findall(r'<figure[^>]*view-type="Preview"', content)),
   'h2':      len(re.findall(r'<h2[^>]*>', content)),
   'h3':      len(re.findall(r'<h3[^>]*>', content)),
+  'bold':    len(re.findall(r'<b>[^<]+</b>', content)),  # Lark render bold via <b>
+  'italic':  len(re.findall(r'<em>[^<]+</em>', content)),
   'markers': len(re.findall(r'\[\[IMG_\d+\]\]', content)),
 }
 print(stats)
@@ -38,8 +40,37 @@ print(stats)
 | Số `<figure view-type="Preview">` | đếm trong XML | = số video từ Phase 1.4 |
 | Số heading `##` | gốc vs dịch | bằng nhau |
 | Số heading `###` | gốc vs dịch | bằng nhau (±2 do tổ chức lại) |
+| **Số `<b>` (bold)** | gốc vs dịch | **bằng nhau (sai số < 5%)** — xem Bước 2b |
 | Số đoạn văn | gốc vs dịch | chênh lệch < 15% |
 | Marker còn sót | `[[IMG_` trong Lark doc | = 0 |
+
+### Bước 2b: Bold preservation check (CỨNG)
+
+WeChat dùng bold + highlight cam/đỏ ở khắp bài cho key insight. Mất bold = bản dịch phẳng lì, mất ý đồ tác giả.
+
+```python
+# Đếm bold trong text gốc (sau Script 2 - đã có **markers**)
+src_bold = len(re.findall(r'\*\*[^*]+\*\*', source_text_with_markers))
+
+# Đếm <b> trong Lark doc XML
+tgt_bold = len(re.findall(r'<b>[^<]+</b>', lark_xml))
+
+diff = abs(src_bold - tgt_bold)
+ratio = diff / src_bold if src_bold else 0
+print(f'Source bold: {src_bold}, Lark bold: {tgt_bold}, diff ratio: {ratio:.2%}')
+assert ratio < 0.05, f'BOLD MISMATCH — fix bằng docs +update str_replace'
+```
+
+**Nếu mismatch:** 
+1. Xác định cụm bị mất bold (so từng paragraph)
+2. Dùng `lark-cli docs +update --command str_replace --pattern "exact text" --content "exact text"` — không, str_replace không tạo được bold
+3. Cách đúng: fetch block ID của paragraph, dùng `block_replace` với XML có `<b>...</b>` bao quanh cụm cần bold:
+   ```bash
+   echo '<p id="BLOCK_ID">Text bình thường <b>cụm cần bold</b> tiếp tục.</p>' | \
+     lark-cli docs +update --api-version v2 --doc DOC_ID \
+       --command block_replace --block-id BLOCK_ID \
+       --doc-format xml --content -
+   ```
 
 ### Bước 3: Kiểm tra vị trí ảnh & video
 

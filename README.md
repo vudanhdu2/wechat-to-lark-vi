@@ -81,6 +81,13 @@ wechat-to-lark/
 
 ## Changelog
 
+### v2.1.0 (2026-05-21)
+
+- **NEW: Format preservation as hard constraint** — Script 2 now converts `<strong>`, `<b>`, `<span style="font-weight:bold">`, and `<span style="color:cam/đỏ">` to markdown `**bold**` BEFORE stripping HTML
+- **NEW: translation-guidelines.md MANDATORY section** — translator must keep same count of `**...**` markers between source and target, with self-check formula
+- **NEW: QA Bước 2b** — bold count parity check between source markers and Lark `<b>` tags, with auto-fix path via `block_replace`
+- **WHY**: WeChat uses bold + orange/red highlight extensively for key insights. Without preservation, translations on other machines came out flat (no emphasis), breaking quality consistency across installs.
+
 ### v2.0.0 (2026-05-21)
 
 - **NEW**: Full video support — extract, download, embed as inline player
