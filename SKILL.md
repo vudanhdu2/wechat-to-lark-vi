@@ -1,10 +1,10 @@
 ---
 name: wechat-to-lark
-version: 2.1.0
+version: 2.2.0
 description: |
-  Pipeline dịch bài viết WeChat sang tiếng Việt và đăng lên LarkSuite.
+  Pipeline dịch bài viết WeChat sang tiếng Việt thuần và đăng lên LarkSuite.
   Kích hoạt khi user cung cấp link mp.weixin.qq.com và yêu cầu dịch/clone bài viết.
-  Bao gồm: trích xuất nội dung + ảnh + video + format markers, dịch thuần Việt (bảo toàn bold/italic), tạo Lark doc có ảnh & video embed, QA đối chiếu.
+  Bao gồm: trích xuất nội dung + ảnh + video + format markers, dịch 4-pass với anti-pattern rewrite (chống dịch sát chữ), bảo toàn bold/italic, tạo Lark doc có ảnh & video embed, QA đối chiếu.
 metadata:
   author: vudan
   updated: 2026-05-21
@@ -33,15 +33,31 @@ EVALEOF
 4. **`--file` yêu cầu relative path** trong thư mục hiện tại — `cd` vào thư mục chứa file trước khi chạy `+media-insert`. Path tuyệt đối kiểu Windows (`C:/...`) sẽ bị reject.
 5. **`/new` API từ v2.5.3:** dùng `curl -X POST --data-raw "URL" "http://localhost:3456/new"`, không phải query string.
 
-## 🔴 Hard constraint: Bảo toàn formatting
+## 🔴 Hard constraints: chất lượng bản dịch
 
-Đây là RÀNG BUỘC CỨNG, không phải tuỳ chọn. Áp dụng cho mọi lần chạy skill trên mọi máy:
+Đây là 2 RÀNG BUỘC CỨNG, không phải tuỳ chọn. Áp dụng cho MỌI lần chạy skill trên MỌI máy. Nếu không tuân thủ, bản dịch trên máy khác sẽ không đạt chất lượng như mong muốn.
+
+### Ràng buộc 1: Thuần Việt — KHÔNG dịch sát chữ
+
+Phase 3 BẮT BUỘC thực hiện **4 pass tuần tự**:
+- **Pass 1** Dịch nghĩa
+- **Pass 2** Rewrite anti-patterns (scan bảng anti-patterns.md, sửa calque)
+- **Pass 3** Glossary consistency (term nhất quán xuyên bài)
+- **Pass 4** Đọc to test (không vấp, không câu dài >40 từ)
+
+Xem `references/translation-anti-patterns.md` cho **bảng tra cứu cụ thể** những cụm Trung→Việt sai phổ biến (vượt ngược, một là... một là..., việc nào dùng được... thì..., thực hiện tăng, etc.) và cách rewrite đúng.
+
+Xem `references/translation-guidelines.md` cho 5 câu hỏi smell test.
+
+**KHÔNG được skip Pass 2.** Đây là pass nâng chất lượng từ "dịch máy đọc được" thành "thuần Việt tự nhiên".
+
+### Ràng buộc 2: Bảo toàn formatting (bold/italic/highlight)
 
 1. **Phase 1.5 BẮT BUỘC dùng Script 2 mới (có format markers).** Script cũ chỉ strip HTML — KHÔNG được dùng. Xem `references/wechat-extraction.md → Script 2`.
-2. **Phase 3 BẮT BUỘC bảo toàn `**bold**` và `*italic*` markers** từ text đã extract. Số cụm bold trong bản dịch = số cụm bold trong bản gốc (sau extraction). Xem `references/translation-guidelines.md → MANDATORY: Bảo toàn formatting`.
-3. **Phase 5 BẮT BUỘC verify bold count** giữa text gốc và Lark doc. Nếu chênh lệch → fix ngay bằng `docs +update --command str_replace`. Xem `references/qa-checklist.md → Bold preservation check`.
+2. **Phase 3 BẮT BUỘC bảo toàn `**bold**` và `*italic*` markers** từ text đã extract. Số cụm bold trong bản dịch = số cụm bold trong bản gốc.
+3. **Phase 5 BẮT BUỘC verify bold count** giữa text gốc và Lark doc. Nếu chênh lệch → fix ngay bằng `block_replace`. Xem `references/qa-checklist.md → Bold preservation check`.
 
-Lý do tồn tại ràng buộc này: WeChat dùng bold + highlight cam/đỏ cho key insight ở khắp bài. Nếu skill không bảo toàn, bản dịch trở nên phẳng lì, mất hoàn toàn nhấn mạnh của tác giả → chất lượng sụt giảm rõ rệt và không nhất quán giữa các lần chạy.
+Lý do: WeChat dùng bold + highlight cam/đỏ cho key insight khắp bài. Mất bold = bản dịch phẳng lì, mất ý đồ tác giả.
 
 ## Khi nào kích hoạt
 
@@ -162,41 +178,61 @@ Dùng Script 3 trong [references/wechat-extraction.md](references/wechat-extract
 
 ---
 
-## Phase 3: TRANSLATE — Dịch sang tiếng Việt
+## Phase 3: TRANSLATE — Dịch sang tiếng Việt (4 pass bắt buộc)
 
-> Đọc chi tiết tại [references/translation-guidelines.md](references/translation-guidelines.md)
+> Đọc chi tiết tại:
+> - [references/translation-guidelines.md](references/translation-guidelines.md) — nguyên tắc + smell test
+> - [references/translation-anti-patterns.md](references/translation-anti-patterns.md) — bảng tra cứu cụ thể
 
 ### Pre-flight: đếm format markers
 
-**TRƯỚC KHI dịch**, đếm trong text đã extract:
-- Số cụm `**...**` (bold) — gọi là `N_bold_src`
-- Số cụm `*...*` (italic) — gọi là `N_italic_src`
+TRƯỚC khi dịch, đếm trong text đã extract:
+- `N_bold_src` = số cụm `**...**`
+- `N_italic_src` = số cụm `*...*` (không phải bold)
+- `N_img_src` = số markers `[[IMG_N]]`
 
-Bản dịch hoàn chỉnh PHẢI có cùng số lượng. Đây là tiêu chí pass/fail cứng — không phải khuyến nghị.
+Bản dịch hoàn chỉnh PHẢI có cùng số lượng.
 
-### Nguyên tắc cốt lõi
+### Pass 1 — Dịch nghĩa
 
-- **Thuần Việt**: Viết như tác giả Việt Nam, không phải dịch máy
-- **Giữ nguyên cả lượng và vị trí**: `**bold**` markers, `*italic*` markers, tên sản phẩm, thuật ngữ kỹ thuật, tên Skill, `[[IMG_N]]` markers
-- **Adapt**: Ẩn dụ, idiom Trung Quốc → giải thích tự nhiên cho người Việt
-- **Format**: Nhận diện nội dung phù hợp cho callout, grid, table của Lark
+Dịch sát ý nguyên gốc, giữ:
+- Mọi `**bold**` và `*italic*` markers (đúng vị trí và số lượng)
+- Mọi `[[IMG_N]]` markers (đúng vị trí)
+- Tên sản phẩm, thương hiệu, thuật ngữ tiếng Anh (Gemini, Spark, MCP, API, Agent...)
+
+### Pass 2 — Rewrite anti-patterns (KHÔNG ĐƯỢC SKIP)
+
+Mở `references/translation-anti-patterns.md`, scan bản dịch theo 5 bảng:
+1. Calques cấu trúc câu (Một là... một là..., trước hết...)
+2. Động từ dịch sát (vượt ngược → vượt mặt; nhìn thấy → nghe nhắc đến)
+3. Cụm chuyển ý (Đối với... mà nói → Với...)
+4. Hán Việt vs thuần Việt (tiến hành phân tích → phân tích)
+5. Cấu trúc câu (bị động lạm dụng, câu dài, đại từ chỉ định thừa)
+
+Sửa từng chỗ vướng. **Pass này nâng chất lượng dịch nhiều nhất.**
+
+### Pass 3 — Glossary consistency
+
+Đảm bảo các term ở mục 6 anti-patterns.md dùng nhất quán xuyên bài. Vd: nếu chọn "agent" thì không lúc "tác nhân" lúc "đại lý".
+
+### Pass 4 — Đọc to test + format check
+
+**4a. Đọc to test:** Sample 3 đoạn ngẫu nhiên, đọc thầm. Nếu vấp / nghe lạ / câu >40 từ → rewrite.
+
+**4b. Format check (assertion cứng):**
+```python
+import re
+src_bold = len(re.findall(r'\*\*[^*]+\*\*', source_text))
+tgt_bold = len(re.findall(r'\*\*[^*]+\*\*', translated_text))
+assert src_bold == tgt_bold, f"Bold mismatch: src={src_bold} tgt={tgt_bold}"
+```
+
+Mismatch → fix ngay, KHÔNG sang Phase 4.
 
 ### Xử lý vị trí video
 
 - Nếu đoạn gốc có text giới thiệu video → dịch text đó, dùng làm anchor cho video sau này
 - Nếu không có anchor rõ → trong bản dịch, chèn dòng caption `**📺 [Mô tả ngắn về video]:**` ở vị trí phù hợp; caption này sẽ là anchor cho `--selection-with-ellipsis`
-
-### Self-check sau khi dịch (BẮT BUỘC)
-
-```python
-# Đếm markers
-import re
-src_bold = len(re.findall(r'\*\*[^*]+\*\*', source_text))
-tgt_bold = len(re.findall(r'\*\*[^*]+\*\*', translated_text))
-assert src_bold == tgt_bold, f"Bold count mismatch: src={src_bold} tgt={tgt_bold}"
-```
-
-Nếu mismatch → quay lại bản dịch, thêm/bớt bold cho khớp. KHÔNG được skip bước này.
 
 ---
 
@@ -407,8 +443,9 @@ Xuất bảng markdown + link tài liệu Lark. Nếu có vấn đề, dùng `do
 
 | File | Khi nào đọc |
 |------|------------|
-| [references/wechat-extraction.md](references/wechat-extraction.md) | Phase 1-2: trích xuất nội dung WeChat (text/ảnh/video) |
-| [references/translation-guidelines.md](references/translation-guidelines.md) | Phase 3: dịch nội dung |
+| [references/wechat-extraction.md](references/wechat-extraction.md) | Phase 1-2: trích xuất nội dung WeChat (text/ảnh/video) + format markers |
+| [references/translation-guidelines.md](references/translation-guidelines.md) | Phase 3: nguyên tắc dịch + smell test + format preservation |
+| **[references/translation-anti-patterns.md](references/translation-anti-patterns.md)** | **Phase 3 Pass 2 (BẮT BUỘC): bảng tra cứu calque cụ thể, glossary AI/tech** |
 | [references/lark-formatting.md](references/lark-formatting.md) | Phase 4 + 4a: tạo Lark doc + chèn ảnh qua XML |
 | [references/video-handling.md](references/video-handling.md) | Phase 4b: download + insert video |
-| [references/qa-checklist.md](references/qa-checklist.md) | Phase 5: QA đối chiếu |
+| [references/qa-checklist.md](references/qa-checklist.md) | Phase 5: QA đối chiếu (heading, ảnh, video, bold count) |

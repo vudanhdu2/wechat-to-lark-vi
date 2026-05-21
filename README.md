@@ -72,14 +72,29 @@ wechat-to-lark/
 ├── SKILL.md                              # Main pipeline definition (v2.0.0)
 ├── README.md                             # This file
 └── references/
-    ├── wechat-extraction.md              # WeChat DOM extraction (text/images/videos)
-    ├── translation-guidelines.md         # Vietnamese translation style guide
+    ├── wechat-extraction.md              # WeChat DOM extraction (text/images/videos + format markers)
+    ├── translation-guidelines.md         # Translation principles + 4-pass workflow + smell test
+    ├── translation-anti-patterns.md      # Concrete zh→vi calque lookup table + AI/tech glossary
     ├── lark-formatting.md                # Lark doc formatting + XML image insertion (v2 API)
     ├── video-handling.md                 # Video download + +media-insert workflow
-    └── qa-checklist.md                   # QA verification (images + videos + headings)
+    └── qa-checklist.md                   # QA verification (headings + images + videos + bold count)
 ```
 
 ## Changelog
+
+### v2.2.0 (2026-05-21)
+
+- **NEW: `references/translation-anti-patterns.md`** — bảng tra cứu cụ thể những calque Trung→Việt thường gặp:
+  - 6 bảng anti-pattern (cấu trúc câu, động từ, chuyển ý, Hán Việt, văn phong, glossary AI/tech)
+  - Mỗi entry: cụm SAI → cụm ĐÚNG + lý do + gốc tiếng Trung
+  - Glossary 30+ term AI/tech thông dụng
+- **NEW: Phase 3 bắt buộc 4-pass workflow**:
+  - Pass 1: dịch nghĩa
+  - Pass 2: rewrite anti-patterns (KHÔNG được skip)
+  - Pass 3: glossary consistency
+  - Pass 4: đọc to test + format check (Python assert)
+- **NEW: 5-question smell test** sau khi dịch
+- **WHY**: bản dịch trên máy khác bị calque ("vượt ngược" thay vì "vượt mặt", "Một là bản flagship" thay vì "Phiên bản flagship") vì guideline cũ chỉ nói chung chung "thuần Việt". v2.2.0 đưa bảng tra cứu cụ thể + workflow ép Claude rewrite có hệ thống.
 
 ### v2.1.0 (2026-05-21)
 
